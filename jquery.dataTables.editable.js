@@ -185,7 +185,7 @@ Editable.prototype = {
                     $html = template;
                 }
 
-                $td.html($html);   
+                $td.html($html);  
             }
         });
         
@@ -215,6 +215,18 @@ Editable.prototype = {
         
         // Call the edit handler function
         context[editHandler].call(this, $row, $table);
+    },
+    _addRow: function(dt) {
+        var rowData = {};
+        $.each( dt.settings()[0].aoColumns, function() {
+            rowData[this.data] = null
+        });
+        
+        var row = dt.row.add(rowData).node();
+        dt.draw();
+        
+        var $td = $(row).find('td');
+        $td.click();
     }
 }; // /Editable.prototype
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -242,6 +254,14 @@ if ( $.fn.DataTable.Api )
     
     Api.register('editable()', function() {
         return this;
+    });
+    
+    Api.register('editable().addRow()', function() {
+        var dtSettings = this.settings()[0]; 
+        
+        if (dtSettings._editable) {
+            dtSettings._editable._addRow(this);
+        }
     });
 }
 
