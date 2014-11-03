@@ -458,6 +458,10 @@ $(document).ready(function() {
         }
     ];
     
+    $('#addRow').on('click', function() {
+        $('#example').DataTable().editable().addRow();
+    });
+    
     $('#example').DataTable( {
         "data": dataJson,
         "editable": true,

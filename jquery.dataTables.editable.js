@@ -137,9 +137,10 @@ Editable.prototype = {
         // Make sure the form is valid
         if ( $form.length == 0 || $form.valid() ) {
             var updateData = $cells.map( function() {
-                var $input = $(dt.cell(this).node()).find('input'),
+                var cell = dt.cell(this),
+                    $input = $(cell.node()).find('input'),
                     jsonProp = dt.settings()[0].aoColumns[dt.cell(this).index().column].mData,
-                    jsonValue = ($input.val()) ? $input.val() : null;
+                    jsonValue = ( $input.length != 0 ) ? $input.val() : cell.data();
                 
                 rowData[jsonProp] = jsonValue;
             });
@@ -158,11 +159,23 @@ Editable.prototype = {
             $(document).off('click.dataTableEditable');
         }
     },
-    _callDefaultEditHandler: function($row, $table) {
+    _isEditable: function($cell) {
+        var $table = $cell.closest('table');
+        
+        if ( $.fn.DataTable.isDataTable($table) ) {
+            var dt = $table.DataTable(),
+                cellIdx = dt.cell($cell).index().column;
+            return dt.settings()[0].aoColumns[cellIdx].editable || $(dt.table().header()).find('th').eq(cellIdx).attr('data-editable') == true;
+        }
+        
+        return false;
+    },
+    _callDefaultEditHandler: function($cell, $row, $table) {
         // If we are already editing one row then save it before we edit another
         var $inputs = $('input', $table),
             $tr = $inputs.closest('tr'),
-            dt = $table.DataTable();
+            dt = $table.DataTable(),
+            editable = this;
 
         if ($inputs.length > 0 && ($inputs.closest('form').length == 0 || !$inputs.valid())) {
             return;
@@ -171,23 +184,31 @@ Editable.prototype = {
 
         // Get each td and convert it to a input based on the data-input-type attribute on the corresponding th
         $row.find('td').each(function(key, value) {
-            var $td = $(this),
+            var $cell = $(this),
                 $th = $($('table').DataTable().table().header()).find('th').eq(key);
             
-            if ( dt.settings()[0].aoColumns[dt.cell($td).index().column].editable || $th.attr('data-editable')) {
+            if ( editable._isEditable($cell) ) {
                 var template = ($th && $th.attr('data-template')) ? $($th.attr('data-template')) : $('<input type="text" class="span12" value="">'),
                     $html;
                 
                 if (template.is('input')) {
-                    $html = template.val($td.text());
+                    $html = template.val($cell.text());
                 } else {
-                    template.find('input').val($td.text());
+                    template.find('input').val($cell.text());
                     $html = template;
                 }
 
-                $td.html($html);  
+                $cell.html($html);  
             }
         });
+        
+        // Set focus to the clicked on cells input if it is editable 
+        // otherwise set focus to the first editable cell in the row
+        if ( editable._isEditable($cell) ) {
+            $cell.find('input').focus();
+        } else {
+            $cell.closest('tr').find('input').eq(0).focus();
+        }
         
         // Attach an event listener so we can know when we click outside of the row
         $(document.body).on('click.dataTableEditable', function(event) {
@@ -204,7 +225,7 @@ Editable.prototype = {
             }
         });
     },
-    _callUserDefinedEditHandler: function($row, $table) {
+    _callUserDefinedEditHandler: function($cell, $row, $table) {
             var namespaces = $table.attr('data-action-edit').split('.'),
             editHandler = namespaces.pop();
         
@@ -226,7 +247,7 @@ Editable.prototype = {
         dt.draw();
         
         var $td = $(row).find('td');
-        $td.click();
+        $td.eq(0).click();
     }
 }; // /Editable.prototype
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -272,12 +293,13 @@ $(document).on('click', 'table.dataTable tr:gt(0) td:not(:has("input"))', functi
     
     if ($.fn.DataTable.isDataTable( $table ) && dtSettings._editable) 
     {
-        var $row = $(this).closest('tr');
+        var $cell = $(this),
+            $row = $cell.closest('tr');            
 
         if ( $table.attr('data-action-edit') ) {
-            dtSettings._editable._callUserDefinedEditHandler($row, $table);
+            dtSettings._editable._callUserDefinedEditHandler($cell, $row, $table);
         } else {
-            dtSettings._editable._callDefaultEditHandler($row, $table);
+            dtSettings._editable._callDefaultEditHandler($cell, $row, $table);
         }            
     }
 });
