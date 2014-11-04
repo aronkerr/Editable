@@ -159,52 +159,75 @@ Editable.prototype = {
             $(document).off('click.dataTableEditable');
         }
     },
+    /**
+    * Determines if a cell can be edited. It will return true if the column has the setting
+    * editable = true or if the <th> for the column has data-editable = true. By adding the 
+    * class 'noEdit' to a <td> you can override this for a specific cell.
+    */
     _isEditable: function($cell) {
         var $table = $cell.closest('table');
         
         if ( $.fn.DataTable.isDataTable($table) ) {
             var dt = $table.DataTable(),
                 cellIdx = dt.cell($cell).index().column;
-            return dt.settings()[0].aoColumns[cellIdx].editable || $(dt.table().header()).find('th').eq(cellIdx).attr('data-editable') == true;
+            return (dt.settings()[0].aoColumns[cellIdx].editable || $(dt.table().header()).find('th').eq(cellIdx).attr('data-editable') == true) && !$cell.hasClass('noEdit');
         }
         
         return false;
+    },
+    _getRowTemplate: function($row, isNew) {
+        var editable = this,
+            $table = $row.closest('table');
+        
+        if (isNew == true) {
+            var $thead = $table.find('th');
+            $thead.each(function(key, value) {
+               var $th = $(value),
+                   template = ($th && $th.attr('data-template')) ? $($th.attr('data-template')) : $('<input type="text" class="span12" value="">'),
+                   $cell = $('<td></td>');
+                
+                $cell.html(template);
+                $row.append($cell);
+            });
+        } else {
+            // Get each td and convert it to a input based on the data-input-type attribute on the corresponding th
+            $row.find('td').each(function(key, value) {
+                var $cell = $(this),
+                    $th = $(dt.table().header()).find('th').eq(key);
+
+                if ( editable._isEditable($cell) ) {
+                    var template = ($th && $th.attr('data-template')) ? $($th.attr('data-template')) : $('<input type="text" class="span12" value="">'),
+                        $html;
+
+                    if (template.is('input')) {
+                        $html = template.val($cell.text());
+                    } else {
+                        template.find('input').val($cell.text());
+                        $html = template;
+                    }
+
+                    $cell.html($html);  
+                }
+            });
+        }
     },
     _callDefaultEditHandler: function($cell, $row, $table) {
         // If we are already editing one row then save it before we edit another
         var $inputs = $('input', $table),
             $tr = $inputs.closest('tr'),
-            dt = $table.DataTable(),
-            editable = this;
+            dt = $table.DataTable();
 
         if ($inputs.length > 0 && ($inputs.closest('form').length == 0 || !$inputs.valid())) {
             return;
         }
-        $tr.trigger('click.dataTableEditable');
+        $tr.trigger('edit.dataTableEditable');
 
         // Get each td and convert it to a input based on the data-input-type attribute on the corresponding th
-        $row.find('td').each(function(key, value) {
-            var $cell = $(this),
-                $th = $($('table').DataTable().table().header()).find('th').eq(key);
-            
-            if ( editable._isEditable($cell) ) {
-                var template = ($th && $th.attr('data-template')) ? $($th.attr('data-template')) : $('<input type="text" class="span12" value="">'),
-                    $html;
-                
-                if (template.is('input')) {
-                    $html = template.val($cell.text());
-                } else {
-                    template.find('input').val($cell.text());
-                    $html = template;
-                }
-
-                $cell.html($html);  
-            }
-        });
+        this._getRowTemplate($row);
         
         // Set focus to the clicked on cells input if it is editable 
         // otherwise set focus to the first editable cell in the row
-        if ( editable._isEditable($cell) ) {
+        if ( this._isEditable($cell) ) {
             $cell.find('input').focus();
         } else {
             $cell.closest('tr').find('input').eq(0).focus();
@@ -238,16 +261,35 @@ Editable.prototype = {
         context[editHandler].call(this, $row, $table);
     },
     _addRow: function(dt) {
-        var rowData = {};
-        $.each( dt.settings()[0].aoColumns, function() {
-            rowData[this.data] = null
-        });
         
-        var row = dt.row.add(rowData).node();
-        dt.draw();
+        // Attach an event listener so we can know when we click outside of the row
+        $(document.body).on('click.dataTableEditable', function(event) {
+            var $inputs = $('table.dataTable input'),
+                $row = $inputs.closest('tr'),
+                $table = $row.closest('table'),
+                $eventTarget = $(event.target);
+            if ( $inputs.length > 0 && $row.has($eventTarget).length < 1) {
+                if ($eventTarget.is('td, tr, th') && $eventTarget.closest('table').length == 0) {
+                    return;
+                }
+                
+                console.log('add new row');
+                //$table.DataTable().settings()[0]._editable._callSaveHandler($row, $table);
+            }
+        }); 
         
-        var $td = $(row).find('td');
-        $td.eq(0).click();
+        var $row = $('<tr></tr>');
+        
+        $(dt.table().node()).prepend($row);
+        
+        this._getRowTemplate($row, true);    
+    },
+    _editCell: function($cell, $row, $table) {    
+        if ( $table.attr('data-action-edit') ) {
+            this._callUserDefinedEditHandler($cell, $row, $table);
+        } else {
+            this._callDefaultEditHandler($cell, $row, $table);
+        } 
     }
 }; // /Editable.prototype
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -288,19 +330,15 @@ if ( $.fn.DataTable.Api )
 
 // Attach event listeners
 $(document).on('click', 'table.dataTable tr:gt(0) td:not(:has("input"))', function(e) {
-    var $table = $(this).closest('table'),
-        dtSettings = $table.DataTable().settings()[0];
+    var $cell = $(this),
+        $row = $cell.closest('tr'),
+        $table = $cell.closest('table');
     
-    if ($.fn.DataTable.isDataTable( $table ) && dtSettings._editable) 
-    {
-        var $cell = $(this),
-            $row = $cell.closest('tr');            
-
-        if ( $table.attr('data-action-edit') ) {
-            dtSettings._editable._callUserDefinedEditHandler($cell, $row, $table);
-        } else {
-            dtSettings._editable._callDefaultEditHandler($cell, $row, $table);
-        }            
+    if ( $.fn.DataTable.isDataTable( $table ) ) {
+        var dtSettings = $table.DataTable().settings()[0];
+        if ( dtSettings._editable ) {
+            dtSettings._editable._editCell($cell, $row, $table);
+        }        
     }
 });
 
