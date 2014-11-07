@@ -109,7 +109,25 @@ Editable.prototype = {
      *  @private
      */
     _construct: function(init) {
+        $(document).on('keypress', function(e) {
+            var key = e.which;
+            if (key === 13) {
+                var $inputs = $('table.dataTable tr.editing input'),
+                $row = $inputs.closest('tr'),
+                $table = $row.closest('table'),
+                $form = $table.closest('form'),
+                dt = $table.DataTable();
 
+                if ($inputs.filter(function() {return $(this).val()}).length == 0) {
+                    $row.remove();
+                    return;
+                }
+
+                if ($table.find('tr.editing').length > 0 && $inputs.length > 0 && ($form.length === 0 || $form.valid())) {
+                    dt.settings()[0]._editable._callSaveHandler(dt, $row);
+                }
+            }
+        });
     },
     /**
      *  Get the data currently contained in the inputs of the row currently
@@ -176,8 +194,6 @@ Editable.prototype = {
 
             // Remove class 'editing' from the row
             $row.removeClass('editing');
-            // Detach the editable click event listener
-            $(document).off('click.dataTableEditable');
         }
     },
     _isEditable: function(dt, $cell) {
@@ -212,17 +228,26 @@ Editable.prototype = {
             }
         });
     },
+    _setFocus: function(dt, $row, $cell) {
+        // Set focus to the clicked on cells input if it is editable
+        // otherwise set focus to the first editable cell in the row
+        if ( typeof $cell != 'undefined' && this._isEditable(dt, $cell) ) {
+            $cell.find('input').focus();
+        } else {
+            $row.find('input').eq(0).focus();
+        }
+    },
     _callDefaultEditHandler: function($cell, $row, $table) {
         // If we are already editing one row then save it before we edit another
         var $inputs = $('input', $table),
-            $tr = $inputs.closest('tr'),
             dt = $table.DataTable(),
             editable = this;
 
         if ($inputs.length > 0 && ($inputs.closest('form').length == 0 || !$inputs.valid())) {
             return;
         }
-        $tr.trigger('click.dataTableEditable');
+
+        $row.trigger('click.dataTableEditable');
 
         // Get row template
         this._getRowTemplate(dt, $row);
@@ -230,29 +255,7 @@ Editable.prototype = {
         // Set class 'editing' to the row so we can find it easier
         $row.addClass('editing');
 
-        // Set focus to the clicked on cells input if it is editable
-        // otherwise set focus to the first editable cell in the row
-        if ( editable._isEditable(dt, $cell) ) {
-            $cell.find('input').focus();
-        } else {
-            $cell.closest('tr').find('input').eq(0).focus();
-        }
-
-        // Attach an event listener so we can know when we click outside of the row
-        $(document.body).on('click.dataTableEditable', function(event) {
-            var $inputs = $('table.dataTable input'),
-                $row = $inputs.closest('tr'),
-                $table = $row.closest('table'),
-                dt = $table.DataTable(),
-                $eventTarget = $(event.target);
-            if ( $inputs.length > 0 && $row.has($eventTarget).length < 1) {
-                if ($eventTarget.is('td, tr, th') && $eventTarget.closest('table').length == 0) {
-                    return;
-                }
-
-                dt.settings()[0]._editable._callSaveHandler(dt, $row);
-            }
-        });
+        this._setFocus(dt, $row, $cell);
     },
     _callUserDefinedEditHandler: function($cell, $row, $table) {
         var namespaces = $table.attr('data-action-edit').split('.'),
@@ -271,9 +274,10 @@ Editable.prototype = {
             $header = $(dt.table().header()),
             $row = $("<tr></tr>");
 
-        // If there is already a row being edited save it first
+        // If there is already a row being edited then return early
         if ($('tr.editing', $table).length > 0) {
-            dt.settings()[0]._editable._callSaveHandler(dt, $('tr.editing', $table));
+            //dt.settings()[0]._editable._callSaveHandler(dt, $('tr.editing', $table));
+            return;
         }
 
         $header.find('th').each(function(key, value) {
@@ -284,6 +288,7 @@ Editable.prototype = {
 
         $table.find('tbody').prepend($row);
         this._getRowTemplate(dt, $row, true);
+        this._setFocus(dt, $row);
     }
 }; // /Editable.prototype
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
