@@ -89,6 +89,20 @@ var Editable = function(dt, init) {
     // Attach the instance to the DataTables instance so it can be accessed easily
     dtSettings._editable = this;
 
+    this.s = {
+        dt: new $.fn.DataTable.Api(dt)
+    };
+
+    // Find the deleted and status columns so we can save the indexes for later use
+    $.each(dtSettings.aoColumns, function(index, settings) {
+        if (settings.mData == "deleted" || settings.data == "deleted" || settings.name == "deleted") {
+            that.s.deletedIdx = settings.idx;
+        }
+        if (settings.mData == "status" || settings.data == "status" || settings.name == "status") {
+            that.s.statusIdx = settings.idx;
+        }
+    });
+
     // Build it
     if ( ! dtSettings._bInitComplete )
     {
@@ -109,6 +123,73 @@ Editable.prototype = {
      *  @private
      */
     _construct: function(init) {
+        var that = this;
+
+        // Save the clean form data to _startingValues
+        this._dataSaved();
+
+        // Set locked and published data attributes and classes where they need to be
+        that._checkStatus();
+
+        // Attach to draw event to check status when table changes
+        $(this.s.dt.table().node()).on('draw.dt', function(e, settings) {
+            that._checkStatus();
+        });
+
+        $(this.s.dt.table().node()).on('click', 'i[data-action="unlock"]', function(e) {
+            e.stopPropagation();
+            console.log('unlock');
+        });
+
+        $(this.s.dt.table().node()).on('save.dt.editable', function(e) {
+            that._updateRowState($(that.s.dt.row(e.rowIndex)));
+        });
+
+        $(this.s.dt.table().node()).on('click', 'i[data-action="delete"]', function(e) {
+            e.stopPropagation();
+            that._deleteRow(that.s.dt.row($(this).closest('tr')));
+        });
+
+        $(document).on('click', '[data-action="addRow"]', function(e) {
+            that._addRow();
+        });
+
+        $(document).on('click', function(e) {
+            var $target = $(e.target),
+                $table = $(that.s.dt.table().node()),
+                $activeRow = $table.find('tr.editing'),
+                $inputs,
+                $form;
+
+            // If we aren't editing a row return early
+            if ($activeRow.length == 0) {
+                return;
+            }
+
+            // If we are clicking on the element with data-action="addRow" return early
+            if ($target.attr('data-action') === 'addRow') {
+                return;
+            }
+
+            // If we are clicking on the row being edited or one of its descendants return early
+            if ($target.hasClass('editing') || $target.closest('tr.editing').length > 0) {
+                return;
+            }
+
+            $inputs = $activeRow.find('input');
+            $form = $table.closest('form');
+
+            // Find the active row and save it if it has inputs
+            if ($inputs.filter(function() {return $(this).val()}).length == 0) {
+                $activeRow.remove();
+                return;
+            }
+
+            if ($inputs.length > 0 && ($form.length === 0 || $form.valid())) {
+                that._callSaveHandler(that.s.dt, $activeRow);
+            }
+        });
+
         $(document).on('keypress', function(e) {
             var key = e.which;
             if (key === 13) {
@@ -128,6 +209,102 @@ Editable.prototype = {
                 }
             }
         });
+    },
+    _checkStatus: function(rows) {
+        var that = this;
+
+        // If rows is undefined set it to the current page rows with filter applied.
+        if (typeof rows == 'undefined') {
+            rows = this.s.dt.rows({"page":"current", "filter":"applied"});
+        }
+
+        rows.iterator('row', function(context, index) {
+            // Make sure status property exists
+            var row = this.row(index),
+                status = row.data().status;
+            if (status == 0) {
+                that._unlockRow(row);
+                that._unpublishRow(row);
+            }
+            if (status == 1) {
+                that._lockRow(row);
+            }
+            if (status == 2) {
+                that._publishRow(row);
+            }
+        });
+    },
+    _lockRow: function(row) {
+        $(row.node()).addClass('locked').attr('data-locked', true).attr('data-editable', false);
+    },
+    _unlockRow: function(row) {
+        $(row.node()).removeClass('locked').attr('data-locked', false).attr('data-editable', true);
+
+    },
+    _publishRow: function(row) {
+        $(row.node()).addClass('published').attr('data-published', true);
+    },
+    _unpublishRow: function(row) {
+        $(row.node()).removeClass('published').attr('data-published', false);
+    },
+    _dataSaved: function() {
+        $.extend(true, this._startingValues, this.s.dt.data().toArray());
+    },
+    _rollbackData: function() {
+        var dt = this.s.dt;
+        dt.rows().remove();
+        $.each(this._startingValues, function(key, value) {
+            dt.row.add(value);
+        });
+
+        this._dirtyValues = {};
+        dt.draw();
+    },
+    _updateRowState: function($row) {
+        var dt = this.s.dt,
+            row = dt.row($row),
+            startingData = this._startingValues[row.index()],
+            currentData = row.data();
+
+        if (JSON.stringify(startingData) != JSON.stringify(currentData)) {
+            this._dirtyValues[row.index()] = row.data();
+        } else {
+            var dirtyData = this._dirtyValues[row.index()];
+            if (typeof dirtyData !== 'undefined') {
+                delete this._dirtyValues[row.index()];
+            }
+        }
+    },
+    _dirtyValues: {},
+    _startingValues: {},
+    _deleteRow: function(row) {
+        var data = row.data(),
+            dt = this.s.dt;
+
+        // Return early if locked or published
+        if (data.status == 1 || data.status == 2) {
+            return this;
+        }
+
+        if (data.status === 0) {
+            dt.cell(row.index(), this.s.deletedIdx).data(1);
+
+            // Trigger a save event that users can hook into and pass all data in it
+            $(dt.table().node()).trigger({
+                type: 'save.dt.editable',
+                rowIndex: row.index(),
+                rowData: row.data()
+            });
+        }
+
+        // If the row was added and not loaded from data src then clear it from dirtyData
+        if (data.status === 'undefined' || data.status === null) {
+            delete this._dirtyValues[row.index()];
+        }
+
+        row.remove().draw();
+
+        return this;
     },
     /**
      *  Get the data currently contained in the inputs of the row currently
@@ -183,11 +360,11 @@ Editable.prototype = {
                 dt.row($row).data(rowData);
             }
 
-            dt.draw();
+            dt.draw(false);
 
             // Trigger a save event that users can hook into and pass all data in it
             $(dt.table().node()).trigger({
-                type: 'save.dataTableEditable',
+                type: 'save.dt.editable',
                 rowIndex: rowIdx,
                 rowData: rowData
             });
@@ -198,11 +375,15 @@ Editable.prototype = {
     },
     _isEditable: function(dt, $cell) {
         var cellIdx = dt.cell($cell).index().column;
+        if ($cell.attr('data-editable') == "false" || $cell.closest('tr').attr('data-editable') == "false") {
+            return false;
+        }
 
-        return dt.settings()[0].aoColumns[cellIdx].editable || $(dt.table().header()).find('th').eq(cellIdx).attr('data-editable') == true;
+        return dt.settings()[0].aoColumns[cellIdx].editable || $(dt.table().header()).find('th').eq(cellIdx).attr('data-editable') == "true";
     },
-    _getRowTemplate: function(dt, $row, isNew) {
-        var editable = this;
+    _getRowTemplate: function($row, isNew) {
+        var that = this,
+            dt = this.s.dt;
 
         if (typeof isNew == 'undefined') {
             isNew = false;
@@ -213,7 +394,7 @@ Editable.prototype = {
             var $cell = $(this),
                 $th = $(dt.table().header()).find('th').eq(key);
 
-            if ( isNew || editable._isEditable(dt, $cell) ) {
+            if ( isNew || that._isEditable(dt, $cell) ) {
                 var template = ($th && $th.attr('data-template')) ? $($th.attr('data-template')) : $('<input type="text" class="span12" value="">'),
                     $html;
 
@@ -247,10 +428,10 @@ Editable.prototype = {
             return;
         }
 
-        $row.trigger('click.dataTableEditable');
+        $row.trigger('click.dt.editable');
 
         // Get row template
-        this._getRowTemplate(dt, $row);
+        this._getRowTemplate($row);
 
         // Set class 'editing' to the row so we can find it easier
         $row.addClass('editing');
@@ -269,14 +450,14 @@ Editable.prototype = {
         // Call the edit handler function
         context[editHandler].call(this, $row, $table);
     },
-    _addRow: function(dt) {
-        var $table = $(dt.table().node()),
+    _addRow: function() {
+        var dt = this.s.dt,
+            $table = $(dt.table().node()),
             $header = $(dt.table().header()),
             $row = $("<tr></tr>");
 
         // If there is already a row being edited then return early
         if ($('tr.editing', $table).length > 0) {
-            //dt.settings()[0]._editable._callSaveHandler(dt, $('tr.editing', $table));
             return;
         }
 
@@ -287,7 +468,7 @@ Editable.prototype = {
         $row.addClass('editing');
 
         $table.find('tbody').prepend($row);
-        this._getRowTemplate(dt, $row, true);
+        this._getRowTemplate($row, true);
         this._setFocus(dt, $row);
     }
 }; // /Editable.prototype
@@ -318,12 +499,57 @@ if ( $.fn.DataTable.Api )
         return this;
     });
 
-    Api.register('editable().addRow()', function() {
-        var dtSettings = this.settings()[0];
+    Api.register('editable.addRow()', function() {
+        this.settings()[0]._editable._addRow();
+        return this;
+    });
 
-        if (dtSettings._editable) {
-            dtSettings._editable._addRow(this);
-        }
+    Api.register('editable.getDirtyData()', function() {
+        return this.settings()[0]._editable._dirtyValues;
+    });
+
+    Api.register('editable.dataSaved()', function() {
+        this.settings()[0]._editable._dataSaved();
+        return this;
+    });
+
+    Api.register('editable.rollbackData()', function() {
+        this.settings()[0]._editable._rollbackData();
+        return this;
+    });
+
+    Api.register('editable.updateRowState()', function($row) {
+        this.settings()[0]._editable._updateRowState($row);
+        return this;
+    });
+
+    Api.register('editable.lockRows()', function() {
+        this.iterator('row', function(context, index) {
+            this.cell(index, this.settings()[0]._editable.s.statusIdx).data(1);
+        });
+        return this;
+    });
+
+    Api.register('editable.unlockRows()', function() {
+        this.iterator('row', function(context, index) {
+            this.cell(index, this.settings()[0]._editable.s.statusIdx).data(0);
+        });
+        return this;
+    });
+
+    Api.register('editable.publishRows()', function() {
+        var that = this;
+        this.iterator('row', function(context, index) {
+            this.cell(index, this.settings()[0]._editable.s.statusIdx).data(2);
+        });
+        return this;
+    });
+
+    Api.register('editable.unpublishRows()', function() {
+        this.iterator('row', function(context, index) {
+            this.cell(index, this.settings()[0]._editable.s.statusIdx).data(1);
+        });
+        return this;
     });
 }
 

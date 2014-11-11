@@ -5,8 +5,9 @@
         <title></title>
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        
+
         <link rel="stylesheet" href="http://cdn.datatables.net/1.10.3/css/jquery.dataTables.min.css">
+        <link rel="stylesheet" href="../jquery.dataTables.editable.css">
         <script src="http://code.jquery.com/jquery-2.1.1.min.js"></script>
         <script src="http://cdn.datatables.net/1.10.3/js/jquery.dataTables.min.js"></script>
         <script src="../jquery.dataTables.editable.js"></script>
@@ -14,18 +15,6 @@
     </head>
     <body>
         <table id="example" class="display" cellspacing="0" width="100%"></table>
-        <button type="button" id="addRow">Add Row</button>
-        <table>
-            <thead>
-                <tr>
-                    <th>Click test table</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Test cell</td>
-                </tr>
-            </tbody>            
-        </table>
+        <button type="button" data-action="addRow">Add Row</button>
     </body>
 </html>
